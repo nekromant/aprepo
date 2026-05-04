@@ -25,7 +25,7 @@ pub fn repack(
     let arch_fallback = ["arm64-v8a", "armeabi-v7a", "armeabi", "x86_64", "x86"];
 
     for target_arch in &config.settings.architectures {
-        let arch_split = find_arch_split(&mut archive, &manifest.splits, target_arch, &arch_fallback);
+        let arch_split = find_arch_split(&manifest.splits, target_arch, &arch_fallback);
         match arch_split {
             Some(split_name) => {
                 let split_path = extract_split_apk(&mut archive, &split_name, temp_dir.path())?;
@@ -86,10 +86,10 @@ struct XapkManifest {
     density_splits: Vec<String>,
 }
 
-#[derive(Debug)]
-struct SplitInfo {
-    file: String,
-    abi: Option<String>,
+#[derive(Debug, Clone)]
+pub struct SplitInfo {
+    pub file: String,
+    pub abi: Option<String>,
 }
 
 fn extract_manifest_json(archive: &mut ZipArchive<std::fs::File>) -> Result<XapkManifest, String> {
@@ -157,15 +157,26 @@ fn extract_base_apk(
     Ok(path)
 }
 
-fn find_arch_split(
-    _archive: &mut ZipArchive<std::fs::File>,
+pub fn find_arch_split(
     splits: &[SplitInfo],
     target: &str,
     fallback: &[&str],
 ) -> Option<String> {
     let target_idx = fallback.iter().position(|&a| a == target)?;
     for &arch in &fallback[target_idx..] {
+        // 1. Try explicit abi field match
         if let Some(split) = splits.iter().find(|s| s.abi.as_deref() == Some(arch)) {
+            return Some(split.file.clone());
+        }
+        // 2. Fallback: derive arch from filename when abi is None
+        let arch_underscore = arch.replace('-', "_");
+        if let Some(split) = splits.iter().find(|s| {
+            if s.abi.is_some() {
+                return false;
+            }
+            let file_lower = s.file.to_lowercase();
+            file_lower.contains(arch) || file_lower.contains(&arch_underscore)
+        }) {
             return Some(split.file.clone());
         }
     }

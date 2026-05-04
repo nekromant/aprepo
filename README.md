@@ -4,7 +4,11 @@
 
 # aprepo
 
-APRepo is a command-line APK download and processing manager for F-Droid repository maintainers. It downloads APKs and XAPKs from multiple sources (Play Store, RuStore, APKPure, GitHub, direct HTTP URLs), caches them with version-aware throttling, and processes cached files into clean, standalone APKs ready for repository publishing.
+**The problem**: ever since the world entered the era of political turmoil, android infrastructure split in multiple stores. Now you have to keep 2 to 3 app stores (at least play store + f-droid for opensource, sometimes appgallery or rustore, depending on where you are). Since only one (play store) really supports installing updates in background, you're stuck manually clicking to install updates and waste time. Since developer of some stores are retarded enough to add ads to the already pretty frustrating process, something was needed to be done. 
+
+**The solution:** Arm your own server with **aprepo**. Aprepo will download the apps you use and their updates automatically from different stores and post it as an f-droid repo. Finally you can have just one appstore for everything and let f-droid privileged extension install everything in backround. As a side effect - you can use this stuff to shield your kids from ever experiencing the whole ADHD-stimulating environment of mobile shit.
+
+**How it works:** Aprepo downloads all the required APKs/XAPKS from stores and places in folder. xapk are repacked into apks as needed (a workaround, since f-droid doesn't yet support installing split APKs). Then you use fdroidserver to publish a repo. 
 
 ## Features
 

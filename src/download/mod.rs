@@ -78,13 +78,7 @@ impl DownloadOrchestrator {
         summary: &mut DownloadSummary,
     ) -> Result<(), String> {
         let cache_path = package.cache_path(&self.config.settings.cache_dir);
-        let arch_cache_path = if arch == "universal" {
-            cache_path.clone()
-        } else {
-            let parent = cache_path.parent().unwrap_or(std::path::Path::new("."));
-            let stem = cache_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-            parent.join(format!("{}_{}.xapk", stem, arch))
-        };
+        let arch_cache_path = compute_arch_cache_path(&cache_path, arch);
 
         if !self.force {
             // Check per-arch throttle using mtime
@@ -205,4 +199,25 @@ impl Downloadable for Box<dyn Downloadable> {
 pub trait DownloadBackend: Send + Sync {
     async fn fetch_version(&self, package: &dyn Downloadable) -> Result<String, String>;
     async fn download(&self, package: &dyn Downloadable, arch: &str, target: &std::path::Path) -> Result<std::path::PathBuf, String>;
+}
+
+/// Compute the per-architecture cache path from a base cache path.
+/// This is extracted for testability.
+pub fn compute_arch_cache_path(cache_path: &std::path::Path, arch: &str) -> std::path::PathBuf {
+    if arch == "universal" {
+        cache_path.to_path_buf()
+    } else {
+        let parent = cache_path.parent().unwrap_or(std::path::Path::new("."));
+        let known_exts = ["apk", "xapk"];
+        let ext = cache_path.extension().and_then(|s| s.to_str());
+        if ext.is_some_and(|e| known_exts.contains(&e)) {
+            // Real APK/XAPK extension (e.g. webdl/test.apk) -> insert arch before it
+            let base = cache_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            parent.join(format!("{}_{}.{}", base, arch, ext.unwrap()))
+        } else {
+            // No real extension (store packages like com.shazam.android) -> append _arch.xapk
+            let name = cache_path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            parent.join(format!("{}_{}.xapk", name, arch))
+        }
+    }
 }

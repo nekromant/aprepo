@@ -94,19 +94,51 @@ impl DownloadBackend for ApkeepBackend {
             ));
         }
 
+        // apkeep naming conventions:
+        //   without arch: {package}.apk  or  {package}.xapk
+        //   with arch:    {package}@{arch}.apk  or  {package}@{arch}.xapk
+        let expected_names: Vec<String> = if arch == "universal" {
+            vec![
+                format!("{}.apk", package_name),
+                format!("{}.xapk", package_name),
+            ]
+        } else {
+            vec![
+                format!("{}@{}.apk", package_name, arch),
+                format!("{}@{}.xapk", package_name, arch),
+                format!("{}.apk", package_name),
+                format!("{}.xapk", package_name),
+            ]
+        };
+
         let entries = std::fs::read_dir(parent)
             .map_err(|e| format!("Cannot read cache dir: {}", e))?;
-        let mut found = None;
+        let mut candidates: Vec<(std::path::PathBuf, std::time::SystemTime)> = Vec::new();
         for entry in entries {
             let entry = entry.map_err(|e| format!("Dir entry error: {}", e))?;
             let name = entry.file_name().to_string_lossy().to_string();
             if name.starts_with(package_name) && (name.ends_with(".apk") || name.ends_with(".xapk")) {
-                found = Some(entry.path());
-                break;
+                let mtime = entry.metadata().ok().and_then(|m| m.modified().ok());
+                if let Some(t) = mtime {
+                    candidates.push((entry.path(), t));
+                }
             }
         }
 
-        let actual_file = found.ok_or_else(|| format!(
+        // Prefer exact expected names, then fall back to most recently modified
+        candidates.sort_by_key(|b| std::cmp::Reverse(b.1));
+        let mut actual_file = None;
+        for expected in &expected_names {
+            if let Some((path, _)) = candidates.iter().find(|(p, _)| p.file_name().map(|n| n == expected.as_str()).unwrap_or(false)) {
+                actual_file = Some(path.clone());
+                break;
+            }
+        }
+        if actual_file.is_none() {
+            actual_file = candidates.into_iter().next().map(|(p, _)| p);
+        }
+
+        let actual_file = actual_file.ok_or_else(|| format!(
             "apkeep did not produce any file matching {}* in {}",
             package_name, parent.display()
         ))?;

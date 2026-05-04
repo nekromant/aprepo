@@ -39,3 +39,88 @@ fn test_zip_validate_empty() {
     assert!(aprepo::util::zip_validate::validate_zip(&tmp).is_ok());
     let _ = std::fs::remove_file(&tmp);
 }
+
+// ------------------------------------------------------------------
+// Regression tests for real-world bugs found during token testing
+// ------------------------------------------------------------------
+
+/// Bug 1: Package names with dots (e.g. com.shazam.android) were truncated
+/// because PathBuf::file_stem() treated ".android" as an extension.
+#[test]
+fn test_arch_cache_path_with_dots_in_package_name() {
+    use std::path::Path;
+    use aprepo::download::compute_arch_cache_path;
+
+    // Store package without extension (e.g. com.shazam.android)
+    let p = Path::new("cache/apkpure/com.shazam.android");
+    let result = compute_arch_cache_path(p, "arm64-v8a");
+    assert_eq!(result, Path::new("cache/apkpure/com.shazam.android_arm64-v8a.xapk"));
+
+    // WebDL with real extension (e.g. test.apk)
+    let p = Path::new("cache/webdl/test.apk");
+    let result = compute_arch_cache_path(p, "arm64-v8a");
+    assert_eq!(result, Path::new("cache/webdl/test_arm64-v8a.apk"));
+
+    // Universal arch should keep original path
+    let p = Path::new("cache/webdl/test.apk");
+    let result = compute_arch_cache_path(p, "universal");
+    assert_eq!(result, Path::new("cache/webdl/test.apk"));
+}
+
+/// Bug 2: APKPure XAPK manifests have abi=null for all splits and use
+/// underscore arch names like "config.armeabi_v7a.apk".
+#[test]
+fn test_find_arch_split_null_abi_with_underscores() {
+    use aprepo::process::xapk::find_arch_split;
+    use aprepo::process::xapk::SplitInfo;
+
+    let splits = vec![
+        SplitInfo { file: "com.shazam.android.apk".to_string(), abi: None },
+        SplitInfo { file: "config.armeabi_v7a.apk".to_string(), abi: None },
+        SplitInfo { file: "config.fr.apk".to_string(), abi: None },
+    ];
+
+    let fallback = ["arm64-v8a", "armeabi-v7a", "armeabi", "x86_64", "x86"];
+
+    // armeabi-v7a should match via filename fallback
+    let found = find_arch_split(&splits, "armeabi-v7a", &fallback);
+    assert_eq!(found, Some("config.armeabi_v7a.apk".to_string()));
+
+    // arm64-v8a has no direct match, but falls back to armeabi-v7a
+    let found = find_arch_split(&splits, "arm64-v8a", &fallback);
+    assert_eq!(found, Some("config.armeabi_v7a.apk".to_string()));
+}
+
+/// Bug 2 continued: Explicit abi field takes precedence over filename fallback.
+#[test]
+fn test_find_arch_split_explicit_abi_precedence() {
+    use aprepo::process::xapk::find_arch_split;
+    use aprepo::process::xapk::SplitInfo;
+
+    let splits = vec![
+        SplitInfo { file: "base.apk".to_string(), abi: None },
+        SplitInfo { file: "config.arm64.apk".to_string(), abi: Some("arm64-v8a".to_string()) },
+        SplitInfo { file: "config.armeabi_v7a.apk".to_string(), abi: Some("armeabi-v7a".to_string()) },
+    ];
+
+    let fallback = ["arm64-v8a", "armeabi-v7a", "armeabi", "x86_64", "x86"];
+
+    let found = find_arch_split(&splits, "arm64-v8a", &fallback);
+    assert_eq!(found, Some("config.arm64.apk".to_string()));
+
+    let found = find_arch_split(&splits, "armeabi-v7a", &fallback);
+    assert_eq!(found, Some("config.armeabi_v7a.apk".to_string()));
+}
+
+/// Bug 4: aapt2 dump badging output parsing.
+#[test]
+fn test_extract_attr_from_aapt2_output() {
+    use aprepo::process::apk::extract_attr;
+
+    let line = "package: name='com.ouraring.oura' versionCode='260421164' versionName='7.12.1' platformBuildVersionName='16'";
+
+    assert_eq!(extract_attr(line, "name="), Some("com.ouraring.oura".to_string()));
+    assert_eq!(extract_attr(line, "versionName="), Some("7.12.1".to_string()));
+    assert_eq!(extract_attr(line, "versionCode="), Some("260421164".to_string()));
+    assert_eq!(extract_attr(line, "missing="), None);
+}
