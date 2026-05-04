@@ -46,7 +46,7 @@ pub fn repack(
     let _base_apk_path = extracted.get(&base_apk_name)
         .ok_or_else(|| format!("Base APK '{}' not found in extracted files", base_apk_name))?;
 
-    // Step 3: Decode ALL APKs with apktool d -s
+    // Step 3: Decode ALL APKs with apktool d -s (full decode, framework is required)
     let mut decoded: HashMap<String, PathBuf> = HashMap::new();
     for (apk_name, apk_path) in &extracted {
         let decoded_name = apk_name.trim_end_matches(".apk");
@@ -111,10 +111,16 @@ pub fn repack(
         // 4f. Fix misnamed image files (.png that are actually JPEG)
         fix_misnamed_image_files(&work_dir)?;
 
-        // 4g. Update AndroidManifest.xml to remove split-required attributes
+        // 4g. Patch private framework references (workaround for older framework)
+        patch_private_framework_refs(&work_dir)?;
+
+        // 4h. Remove unknown manifest attributes (workaround for older framework)
+        remove_unknown_manifest_attrs(&work_dir)?;
+
+        // 4i. Update AndroidManifest.xml to remove split-required attributes
         update_main_manifest_file(&work_dir)?;
 
-        // 4h. Rebuild with apktool b
+        // 4j. Rebuild with apktool b
         let rebuilt = rebuild_apk(&work_dir)?;
 
         // 4i. Zipalign with -p -f 4
@@ -451,6 +457,15 @@ fn merge_apk_resources(main_dir: &Path, split_dir: &Path) -> Result<(), String> 
             continue;
         }
 
+        // Skip binary XML files (vector drawables, etc.) when using -r decode mode.
+        // Their resource IDs reference the split's resource table and won't resolve
+        // in the base APK's resource table. Raw images (png/webp/jpg/gif) are safe to copy.
+        if let Some(ext) = source_path.extension().and_then(|s| s.to_str()) {
+            if ext.eq_ignore_ascii_case("xml") {
+                continue;
+            }
+        }
+
         let rel_path = source_path.strip_prefix(&source_res)
             .map_err(|e| format!("Strip prefix error: {}", e))?;
         let target_path = target_res.join(rel_path);
@@ -664,6 +679,70 @@ fn fix_misnamed_image_files(main_dir: &Path) -> Result<(), String> {
 
     if fixed > 0 {
         info(&format!("Fixed {} misnamed image file(s) (.png -> .jpg)", fixed));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Private Resource Patching (framework version mismatch workaround)
+// ---------------------------------------------------------------------------
+
+fn patch_private_framework_refs(work_dir: &Path) -> Result<(), String> {
+    // When the installed framework is older than the app's compileSdkVersion,
+    // aapt2 rejects references to resources that are public in newer frameworks
+    // but private in the installed one. The @*android: prefix accesses private
+    // framework resources and bypasses the restriction.
+    for entry in walkdir::WalkDir::new(work_dir) {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        if name != "colors.xml" {
+            continue;
+        }
+        let data = match fs::read_to_string(path) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+        if !data.contains("@android:") {
+            continue;
+        }
+        let patched = data.replace("@android:", "@*android:");
+        if let Err(e) = fs::write(path, patched) {
+            warn(&format!("Cannot patch {}: {}", path.display(), e));
+        }
+    }
+    Ok(())
+}
+
+fn remove_unknown_manifest_attrs(work_dir: &Path) -> Result<(), String> {
+    // Remove manifest attributes introduced in newer Android versions that the
+    // installed framework/aapt2 does not recognize.
+    let manifest_path = work_dir.join("AndroidManifest.xml");
+    let data = match fs::read_to_string(&manifest_path) {
+        Ok(d) => d,
+        Err(_) => return Ok(()), // binary manifest, nothing to do
+    };
+    let unknown_attrs = [
+        r#" android:allowCrossUidActivitySwitchFromBelow="false""#,
+        r#" android:allowCrossUidActivitySwitchFromBelow="true""#,
+    ];
+    let mut changed = false;
+    let mut patched = data.clone();
+    for attr in &unknown_attrs {
+        if patched.contains(attr) {
+            patched = patched.replace(attr, "");
+            changed = true;
+        }
+    }
+    if changed {
+        fs::write(&manifest_path, patched)
+            .map_err(|e| format!("Cannot write AndroidManifest.xml: {}", e))?;
     }
     Ok(())
 }
