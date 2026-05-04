@@ -64,14 +64,12 @@ async fn main() {
     std::process::exit(exit_code);
 }
 
-fn cmd_bootstrap(config_path: &str) -> i32 {
-    let path = Path::new(config_path);
-    if path.exists() {
-        logging::error(&format!("Configuration file already exists: {}", path.display()));
-        return 1;
-    }
+pub const BOOTSTRAP_KEYSTORE_PASSWORD: &str = "changeit";
+pub const BOOTSTRAP_KEY_PASSWORD: &str = "changeit";
+pub const BOOTSTRAP_KEY_ALIAS: &str = "aprepo";
 
-    let template = r#"settings:
+pub fn bootstrap_template() -> String {
+    format!(r#"settings:
   cache_dir: "./cache"
   output_dir: "./output"
   retention_depth: 1
@@ -82,9 +80,9 @@ fn cmd_bootstrap(config_path: &str) -> i32 {
   sign:
     enabled: false
     keystore_file: "./signing.p12"
-    keystore_password: "$KEYSTORE_PASSWORD"
-    key_alias: "aprepo"
-    key_password: "$KEY_PASSWORD"
+    keystore_password: "{pw}"
+    key_alias: "{alias}"
+    key_password: "{key_pw}"
 
 sources:
   google_play:
@@ -114,8 +112,21 @@ sources:
     throttle_interval: 24h
     delay_between_requests: 2s
     packages: []
-"#;
+"#,
+        pw = BOOTSTRAP_KEYSTORE_PASSWORD,
+        alias = BOOTSTRAP_KEY_ALIAS,
+        key_pw = BOOTSTRAP_KEY_PASSWORD,
+    )
+}
 
+fn cmd_bootstrap(config_path: &str) -> i32 {
+    let path = Path::new(config_path);
+    if path.exists() {
+        logging::error(&format!("Configuration file already exists: {}", path.display()));
+        return 1;
+    }
+
+    let template = bootstrap_template();
     if let Err(e) = std::fs::write(path, template) {
         logging::error(&format!("Cannot write config: {}", e));
         return 1;
@@ -140,7 +151,7 @@ fn generate_keystore(path: &Path) -> Result<(), String> {
         .arg("-keystore")
         .arg(path)
         .arg("-alias")
-        .arg("aprepo")
+        .arg(BOOTSTRAP_KEY_ALIAS)
         .arg("-keyalg")
         .arg("RSA")
         .arg("-keysize")
@@ -150,9 +161,9 @@ fn generate_keystore(path: &Path) -> Result<(), String> {
         .arg("-storetype")
         .arg("PKCS12")
         .arg("-storepass")
-        .arg("changeit")
+        .arg(BOOTSTRAP_KEYSTORE_PASSWORD)
         .arg("-keypass")
-        .arg("changeit")
+        .arg(BOOTSTRAP_KEY_PASSWORD)
         .arg("-dname")
         .arg("CN=aprepo")
         .status()
@@ -255,5 +266,30 @@ async fn cmd_default(config_path: &str, force: bool, verbose: bool, package_filt
         1
     } else {
         0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression: bootstrap template must use the same keystore_password,
+    /// key_alias, and key_password that generate_keystore() passes to keytool.
+    /// If they drift, the generated keystore will be unreadable by apksigner.
+    #[test]
+    fn test_bootstrap_template_matches_keystore_params() {
+        let tmpl = bootstrap_template();
+        assert!(
+            tmpl.contains(&format!("keystore_password: \"{}\"", BOOTSTRAP_KEYSTORE_PASSWORD)),
+            "template keystore_password does not match generate_keystore storepass"
+        );
+        assert!(
+            tmpl.contains(&format!("key_alias: \"{}\"", BOOTSTRAP_KEY_ALIAS)),
+            "template key_alias does not match generate_keystore alias"
+        );
+        assert!(
+            tmpl.contains(&format!("key_password: \"{}\"", BOOTSTRAP_KEY_PASSWORD)),
+            "template key_password does not match generate_keystore keypass"
+        );
     }
 }
