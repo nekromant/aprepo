@@ -10,7 +10,10 @@ Build a standalone Rust CLI (`aprepo`) that downloads APK/XAPK from multiple sou
 ## Technical Context
 
 **Language/Version**: Rust 1.78+ (edition 2021)
-**Primary Dependencies**: `clap` (CLI), `serde`+`serde_yaml` (config), `zip` (archive validation), `quick-xml` (manifest extraction), `fs2` (file locking), `reqwest` (WebDL/HEAD requests), `tokio` (async runtime for GitHub API calls), `tempfile` (temp dirs)
+**Primary Dependencies**: `clap` (CLI), `serde`+`serde_yaml` (config), `zip` (archive validation), `quick-xml` (manifest extraction, fallback for plain XML), `fs2` (file locking), `reqwest` (WebDL/HEAD requests), `tokio` (async runtime for GitHub API calls), `tempfile` (temp dirs)
+**External Tools (required in `$PATH`)**:
+- Download: `apkeep` (PlayStore/RuStore/APKPure), `gh` (GitHub CLI)
+- Process: `apktool` (decode/rebuild APKs), `zipalign` (page alignment), `apksigner` (PKCS12 signing), `aapt2` (binary AXML manifest extraction fallback)
 **Storage**: Filesystem only — cache directory (raw downloads + `state.yaml`), output directory (processed APKs)
 **Testing**: `cargo test` for unit tests; `tests/integrational/` with Makefile for integration tests using stubbed backends and local APK fixtures
 **Target Platform**: Linux x86_64
@@ -28,7 +31,7 @@ Build a standalone Rust CLI (`aprepo`) that downloads APK/XAPK from multiple sou
 | II. Simplicity First | Single CLI with 3 subcommands; no web server, no DB, no daemon | Pass |
 | III. Surgical Changes | Greenfield project — no existing code to preserve | Pass |
 | IV. Goal-Driven Execution | Success criteria (SC-001 through SC-006) are measurable and testable | Pass |
-| V. Regress-Resistant Fixes | Integration tests mandated; unit tests for XAPK merging required (FR-009b) | Pass |
+| V. Regress-Resistant Fixes | Integration tests mandated; unit tests for XAPK merging required (FR-009b). Real-world testing produced 4 regression tests: arch cache path with dots, XAPK split ABI null fallback, explicit ABI precedence, aapt2 manifest attribute extraction | Pass |
 
 **Gate Result**: All principles satisfied. Proceed to Phase 0.
 
@@ -40,7 +43,7 @@ Build a standalone Rust CLI (`aprepo`) that downloads APK/XAPK from multiple sou
 | II. Simplicity First | 8 direct dependencies; no abstraction layers beyond spec requirements; `std::process::Command` used instead of wrapper crates | Pass |
 | III. Surgical Changes | Greenfield project — design is additive only | Pass |
 | IV. Goal-Driven Execution | Every artifact (data-model, contracts, quickstart) traceable to a spec requirement or SC | Pass |
-| V. Regress-Resistant Fixes | `tests/integrational/` with Makefile specified; XAPK reimplementation has explicit unit-test mandate (FR-009b) | Pass |
+| V. Regress-Resistant Fixes | `tests/integrational/` with Makefile specified; XAPK reimplementation has explicit unit-test mandate (FR-009b). Real-world token testing discovered and fixed 4 bugs with regression tests: arch cache path with dots (file_stem truncation), APKPure ABI=null with underscore arch names, apkeep per-arch file naming, binary AXML requiring aapt2 fallback | Pass |
 
 **Post-Design Gate Result**: All principles satisfied. Ready for task decomposition (`/speckit.tasks`).
 
@@ -78,8 +81,8 @@ specs/001-aprepo-apk-manager/
 │   │   └── webdl.rs     # HTTP direct download + HEAD for metadata
 │   ├── process/
 │   │   ├── mod.rs       # Process orchestrator (cache -> output)
-│   │   ├── xapk.rs      # XAPK extraction, merge, signing
-│   │   └── apk.rs       # APK validation, manifest extraction
+│   │   ├── xapk.rs      # XAPK extraction, 12-step merge (FR-009c: apktool decode/merge/rebuild, zipalign, sign)
+│   │   └── apk.rs       # APK validation, manifest extraction (quick-xml + aapt2 fallback for binary AXML)
 │   └── util/
 │       ├── zip_validate.rs  # ZIP well-formedness check
 │       └── logging.rs       # stdout/stderr output helpers
@@ -98,7 +101,7 @@ specs/001-aprepo-apk-manager/
 
 ## Complexity Tracking
 
-> No constitution violations detected. All abstractions map directly to spec requirements.
+> The 12-step XAPK-to-APK merge (FR-009c) is complex, but justified: a naive base-APK copy fails at install time with `INSTALL_FAILED_MISSING_SPLIT` because Android still sees split-required manifest metadata. The full apktool decode/merge/rebuild cycle is the only known working approach. Simpler alternatives (direct ZIP merge, skipping apktool) were rejected during real-world testing.
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |-----------|------------|-------------------------------------|

@@ -37,7 +37,9 @@
 
 **Goal**: The repository maintainer runs a command to check for and download updates for all configured packages. The system checks each package's current version against the cached version, respects throttling rules, and only downloads when a newer version is available or when a force-refresh is requested.
 
-**Independent Test**: Configure a few packages from different sources, run the download command, and verify that only new or changed versions are fetched while throttle delays are honored.
+**Why this priority**: Without reliable downloads, the repository contains stale or missing packages. This is the core value proposition of the tool.
+
+**Independent Test**: Can be fully tested by configuring a few packages from different sources, running the download command, and verifying that only new or changed versions are fetched while throttle delays are honored.
 
 ### Implementation for User Story 1
 
@@ -61,8 +63,8 @@
 - [X] T011 Implement Process Orchestrator in `src/process/mod.rs` — scan cache directory, compare `mtime` against output, process new/changed files, honor `--force` and `--package` flags
 - [X] T012 [P] [US2] Implement APK Copy + Manifest Extraction in `src/process/apk.rs` — validate ZIP, extract `package` and `versionName` from `AndroidManifest.xml`, copy to output with `package_name_version_architecture.apk` naming
 - [X] T013 [P] [US2] Implement XAPK Extraction and Manifest Parsing in `src/process/xapk.rs` — read XAPK as ZIP, parse `manifest.json`, identify base APK and splits (architecture, density)
-- [X] T014 [US2] Implement XAPK-to-APK Merging in `src/process/xapk.rs` — reimplemented from scratch; for universal XAPKs produce one APK per architecture; for per-architecture XAPKs produce one APK; invoke `apktool`, `zipalign`
-- [ ] T015 [US2] Write XAPK Merge Unit Tests in `tests/` — cover base+arch split merge, density split merge, fallback ABI selection, missing split handling; mock `apktool`/`zipalign` calls
+- [X] T014 [US2] Implement XAPK-to-APK Merging in `src/process/xapk.rs` — full 12-step apktool decode/merge/rebuild cycle per FR-009c: extract all APKs → classify by type → decode with `apktool d -s` → per-arch copy of decoded base → merge `lib/` from arch splits → merge `res/` from DPI/locale splits (skip `values/public.xml`, skip existing `drawable*`) → merge `assets/assetpack/` → merge `doNotCompress` from `apktool.yml` → delete `BNDLTOOL.*` → fix misnamed `.png` → update `AndroidManifest.xml` (remove `isSplitRequired`, change stamp type) → rebuild with `apktool b` → `zipalign -p -f 4` → `apksigner sign`
+- [X] T015 [US2] Write XAPK Merge Unit Tests in `src/process/xapk.rs` (`#[cfg(test)]`) — 16 tests covering: APK classification (main/arch/dpi/locale), DPI priority ordering, `doNotCompress` extract/replace/deduplicate, manifest surgery (all 6 replacements verified), misnamed image fix (JPEG-in-PNG detection), signature file deletion, resource merge (public.xml skip + drawable preservation), arch lib tree copy, assetpack copy, recursive directory copy
 - [X] T016 [US2] Implement Signing Integration in `src/process/xapk.rs` — apply PKCS12 signing via `apksigner` to repacked APKs only; direct-download APKs copied unchanged
 - [X] T017 [US2] Implement Retention & Cleanup in `src/process/mod.rs` — purge old versions exceeding `retention_depth` for all packages; remove artifacts for packages no longer in configuration
 
@@ -79,7 +81,7 @@
 ### Implementation for User Story 3
 
 - [X] T018 [P] [US3] Define clap CLI in `src/main.rs` — subcommands (`bootstrap`, `download`, `process`), flags (`--config`, `--verbose`, `--force`, `--package`), help text matching CLI contract
-- [ ] T019 [US3] Implement Bootstrap Command in `src/main.rs` — generate template YAML config with `settings` and `sources` keys, create random PKCS12 keystore in config directory
+- [X] T019 [US3] Implement Bootstrap Command in `src/main.rs` — generate template YAML config with `settings` and `sources` keys, create PKCS12 keystore via `keytool` with constants matching template (`BOOTSTRAP_KEYSTORE_PASSWORD`, `BOOTSTRAP_KEY_ALIAS`, `BOOTSTRAP_KEY_PASSWORD`)
 - [X] T020 [US3] Implement Default Run in `src/main.rs` — when no subcommand given, run `download`, then `process`, then cleanup in sequence; total failure stops before process; partial failure continues
 - [X] T021 [US3] Implement Package Filter in `src/main.rs` — `--package` / `-p` limits download to matching store-source package and process to cached APKs with matching manifest package
 
@@ -193,3 +195,15 @@ With multiple developers:
 | **M4 — Full CLI** | T018–T021 | All commands and flags work; default run chains download+process |
 | **M5 — Integration Tests** | T022–T028 | `make` in `tests/integrational/` passes all fixtures |
 | **M6 — Ship** | T029–T031 | `cargo clippy` clean; docs verified; ready for merge |
+
+---
+
+## Notes
+
+- [P] tasks = different files, no dependencies
+- [Story] label maps task to specific user story for traceability
+- Each user story should be independently completable and testable
+- Verify tests fail before implementing
+- Commit after each task or logical group
+- Stop at any checkpoint to validate story independently
+- Avoid: vague tasks, same file conflicts, cross-story dependencies that break independence
