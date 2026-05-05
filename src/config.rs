@@ -316,6 +316,9 @@ impl crate::download::Downloadable for StorePackage {
     fn throttle_policy(&self) -> &str {
         &self.throttle_policy
     }
+    fn throttle_interval(&self) -> Duration {
+        self.throttle_interval
+    }
     fn delay_between_requests(&self) -> Option<Duration> {
         Some(self.delay_between_requests)
     }
@@ -402,6 +405,9 @@ impl crate::download::Downloadable for GitHubPackage {
     }
     fn throttle_policy(&self) -> &str {
         &self.throttle_policy
+    }
+    fn throttle_interval(&self) -> Duration {
+        self.throttle_interval
     }
     fn delay_between_requests(&self) -> Option<Duration> {
         Some(self.delay_between_requests)
@@ -492,6 +498,9 @@ impl crate::download::Downloadable for WebDlPackage {
     }
     fn throttle_policy(&self) -> &str {
         &self.throttle_policy
+    }
+    fn throttle_interval(&self) -> Duration {
+        self.throttle_interval
     }
     fn delay_between_requests(&self) -> Option<Duration> {
         Some(self.delay_between_requests)
