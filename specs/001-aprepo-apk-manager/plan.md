@@ -81,7 +81,7 @@ specs/001-aprepo-apk-manager/
 │   │   └── webdl.rs     # HTTP direct download + HEAD for metadata
 │   ├── process/
 │   │   ├── mod.rs       # Process orchestrator (cache -> output)
-│   │   ├── xapk.rs      # XAPK extraction, 12-step merge (FR-009c: apktool decode/merge/rebuild, zipalign, sign)
+│   │   ├── xapk.rs      # XAPK extraction, 12-step merge (FR-009c: apktool decode/merge/rebuild, zipalign, sign), arch validation (FR-009d)
 │   │   └── apk.rs       # APK validation, manifest extraction (quick-xml + aapt2 fallback for binary AXML)
 │   └── util/
 │       ├── zip_validate.rs  # ZIP well-formedness check
