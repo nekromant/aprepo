@@ -23,7 +23,7 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [X] T002 [P] Implement Config module in `src/config.rs` — YAML parsing, `$VARIABLE` interpolation, validation (uniqueness, PlayStore policy, directory existence)
+- [X] T002 [P] Implement Config module in `src/config.rs` — YAML parsing, `$VARIABLE` interpolation, validation (uniqueness, PlayStore policy, directory existence, invalid architecture rejection per FR-018b)
 - [X] T003 [P] Implement State module in `src/state.rs` — `state.yaml` read/write, version records keyed by `source:identifier`, `SourceCapability` tracking per source
 - [X] T004 [P] Implement Lock module in `src/lock.rs` — exclusive `flock` on `state.yaml` at startup, RAII release
 - [X] T005 [P] Implement Logging utility in `src/util/logging.rs` — stdout for progress, stderr for errors/warnings/debug with `--verbose` gating

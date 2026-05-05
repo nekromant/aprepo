@@ -70,7 +70,7 @@ specs/001-aprepo-apk-manager/
 ├── Cargo.toml           # Workspace root
 ├── src/
 │   ├── main.rs          # CLI entrypoint (clap subcommands)
-│   ├── config.rs        # YAML config parsing, validation, env interpolation
+│   ├── config.rs        # YAML config parsing, validation, env interpolation (FR-018b: arch validation)
 │   ├── state.rs         # state.yaml read/write, version records, capabilities
 │   ├── lock.rs          # Exclusive file lock on state.yaml
 │   ├── download/
