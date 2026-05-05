@@ -937,7 +937,6 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), std::io::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     #[test]
     fn test_classify_apk_main() {

@@ -124,3 +124,56 @@ fn test_extract_attr_from_aapt2_output() {
     assert_eq!(extract_attr(line, "versionCode="), Some("260421164".to_string()));
     assert_eq!(extract_attr(line, "missing="), None);
 }
+
+/// FR-018b: Config must reject invalid architectures at startup.
+#[test]
+fn test_config_rejects_invalid_architecture() {
+    use aprepo::config::Config;
+
+    let yaml = r#"
+settings:
+  cache_dir: "/tmp/cache"
+  output_dir: "/tmp/output"
+  architectures:
+    - arm64-v8a
+    - invalid_arch
+sources:
+  apkpure:
+    packages:
+      - com.example.app
+"#;
+    let result = serde_yaml::from_str::<Config>(yaml);
+    assert!(result.is_ok());
+    let config = result.unwrap();
+    let validation = config.validate();
+    assert!(validation.is_err());
+    let err = validation.unwrap_err();
+    assert!(err.contains("Invalid architecture"));
+    assert!(err.contains("invalid_arch"));
+}
+
+#[test]
+fn test_config_accepts_valid_architectures() {
+    use aprepo::config::Config;
+
+    let yaml = r#"
+settings:
+  cache_dir: "/tmp/cache"
+  output_dir: "/tmp/output"
+  architectures:
+    - arm64-v8a
+    - armeabi-v7a
+    - x86_64
+    - x86
+    - armeabi
+sources:
+  apkpure:
+    packages:
+      - com.example.app
+"#;
+    let result = serde_yaml::from_str::<Config>(yaml);
+    assert!(result.is_ok());
+    let config = result.unwrap();
+    let validation = config.validate();
+    assert!(validation.is_ok());
+}

@@ -115,12 +115,28 @@ impl Config {
         Ok(config)
     }
 
-    fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), String> {
         if self.settings.cache_dir.is_empty() {
             return Err("settings.cache_dir is required".to_string());
         }
         if self.settings.output_dir.is_empty() {
             return Err("settings.output_dir is required".to_string());
+        }
+
+        // FR-018b: Validate architectures
+        let valid_archs = ["arm64-v8a", "armeabi-v7a", "armeabi", "x86_64", "x86"];
+        let mut invalid_archs = Vec::new();
+        for arch in &self.settings.architectures {
+            if !valid_archs.contains(&arch.as_str()) {
+                invalid_archs.push(arch.clone());
+            }
+        }
+        if !invalid_archs.is_empty() {
+            return Err(format!(
+                "Invalid architecture(s) in settings.architectures: {}. Valid values: {}",
+                invalid_archs.join(", "),
+                valid_archs.join(", ")
+            ));
         }
 
         let mut seen_packages: HashSet<String> = HashSet::new();
