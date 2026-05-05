@@ -40,6 +40,20 @@ fn test_zip_validate_empty() {
     let _ = std::fs::remove_file(&tmp);
 }
 
+/// Bug: Servers sometimes return HTML error pages instead of APKs.
+/// ZIP validation should detect non-ZIP magic bytes early and report clearly.
+#[test]
+fn test_zip_validate_rejects_html_error_page() {
+    let tmp = std::env::temp_dir().join("aprepo_test_fake.zip");
+    std::fs::write(&tmp, b"<html><body>Error: rate limited</body></html>").unwrap();
+    let result = aprepo::util::zip_validate::validate_zip(&tmp);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.contains("not a valid ZIP archive"), "Expected clear error for HTML page, got: {}", err);
+    assert!(err.contains("rate limited") || err.contains("preview"), "Expected preview in error, got: {}", err);
+    let _ = std::fs::remove_file(&tmp);
+}
+
 // ------------------------------------------------------------------
 // Regression tests for real-world bugs found during token testing
 // ------------------------------------------------------------------

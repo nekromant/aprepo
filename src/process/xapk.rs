@@ -437,6 +437,7 @@ fn decode_apk(apk_path: &Path, output_dir: &Path) -> Result<(), String> {
 fn rebuild_apk(base_dir: &Path) -> Result<PathBuf, String> {
     let status = Command::new("apktool")
         .arg("b")
+        .arg("--use-aapt2")
         .arg(base_dir)
         .status()
         .map_err(|e| format!("apktool build failed for {}: {}", base_dir.display(), e))?;
