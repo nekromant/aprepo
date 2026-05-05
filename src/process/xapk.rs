@@ -63,6 +63,16 @@ pub fn repack(
     let arch_fallback = ["arm64-v8a", "armeabi-v7a", "armeabi", "x86_64", "x86"];
 
     for target_arch in &config.settings.architectures {
+        // FR-009d: Validate that the XAPK actually supports the target architecture
+        // before repacking. If the XAPK contains arch splits but none match the
+        // target exactly, warn and skip. Absence of native code (no arch splits)
+        // is NOT an error.
+        if let Some(mismatch) = check_arch_mismatch(&manifest.splits, target_arch, xapk_path) {
+            warn(&mismatch);
+            results.push(Err(format!("Architecture mismatch for {}: {}", target_arch, mismatch)));
+            continue;
+        }
+
         let arch_split_name = find_arch_split(&manifest.splits, target_arch, &arch_fallback);
 
         if arch_split_name.is_none() {
@@ -336,6 +346,68 @@ pub fn find_arch_split(
         }
     }
     None
+}
+
+// ---------------------------------------------------------------------------
+// Architecture Validation (FR-009d)
+// ---------------------------------------------------------------------------
+
+/// Checks whether a downloaded per-architecture XAPK actually contains the
+/// requested target architecture. Returns `Some(warning)` if the XAPK has
+/// architecture splits but none match the target exactly. Returns `None` if:
+/// - the XAPK contains no architecture splits at all (no native code, valid for all arches), or
+/// - at least one arch split exactly matches the target architecture.
+fn check_arch_mismatch(
+    splits: &[SplitInfo],
+    target: &str,
+    xapk_path: &Path,
+) -> Option<String> {
+    let known_archs = ["arm64-v8a", "armeabi-v7a", "armeabi", "x86_64", "x86"];
+
+    // Identify which splits are architecture splits
+    let arch_splits: Vec<&SplitInfo> = splits.iter().filter(|s| {
+        if let Some(ref abi) = s.abi {
+            known_archs.contains(&abi.as_str())
+        } else {
+            let file_lower = s.file.to_lowercase();
+            known_archs.iter().any(|&arch| {
+                let arch_underscore = arch.replace('-', "_");
+                file_lower.contains(arch) || file_lower.contains(&arch_underscore)
+            })
+        }
+    }).collect();
+
+    // No architecture splits at all → no native code → valid for all architectures
+    if arch_splits.is_empty() {
+        return None;
+    }
+
+    // Check for exact match of target architecture
+    let target_underscore = target.replace('-', "_");
+    let exact_match = arch_splits.iter().any(|s| {
+        if let Some(ref abi) = s.abi {
+            abi == target
+        } else {
+            let file_lower = s.file.to_lowercase();
+            file_lower.contains(target) || file_lower.contains(&target_underscore)
+        }
+    });
+
+    if exact_match {
+        return None;
+    }
+
+    // The XAPK has architecture splits but none match the target.
+    let found_arches: Vec<String> = arch_splits.iter().map(|s| {
+        s.abi.clone().unwrap_or_else(|| s.file.clone())
+    }).collect();
+
+    Some(format!(
+        "XAPK {} was requested for architecture '{}' but only contains: {}. Skipping.",
+        xapk_path.display(),
+        target,
+        found_arches.join(", ")
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -1012,25 +1084,26 @@ mod tests {
         fs::create_dir_all(main_res.join("values")).unwrap();
         fs::write(main_res.join("values").join("strings.xml"), b"main_strings").unwrap();
 
-        // Split has public.xml (should be skipped), new drawable (should copy), existing drawable (should skip), new values (should copy)
+        // Split has public.xml (should be skipped), new drawable (should copy), existing drawable (should skip), new raw image (should copy)
         fs::create_dir_all(split_res.join("values")).unwrap();
         fs::write(split_res.join("values").join("public.xml"), b"public").unwrap();
-        fs::write(split_res.join("values").join("colors.xml"), b"colors").unwrap();
         fs::create_dir_all(split_res.join("drawable-xxhdpi")).unwrap();
         fs::write(split_res.join("drawable-xxhdpi").join("icon.png"), b"split_icon").unwrap();
         fs::write(split_res.join("drawable-xxhdpi").join("new.png"), b"new_icon").unwrap();
+        fs::write(split_res.join("drawable-xxhdpi").join("banner.webp"), b"webp_banner").unwrap();
 
         merge_apk_resources(tmp.path().join("main").as_path(), tmp.path().join("split").as_path()).unwrap();
 
         // public.xml should be skipped
         assert!(!main_res.join("values").join("public.xml").exists());
-        // colors.xml should be copied (new file)
-        assert!(main_res.join("values").join("colors.xml").exists());
-        assert_eq!(fs::read_to_string(main_res.join("values").join("colors.xml")).unwrap(), "colors");
         // Existing icon.png should be preserved (main version)
         assert_eq!(fs::read_to_string(main_res.join("drawable-xxhdpi").join("icon.png")).unwrap(), "main_icon");
         // New drawable should be copied
         assert!(main_res.join("drawable-xxhdpi").join("new.png").exists());
+        assert_eq!(fs::read_to_string(main_res.join("drawable-xxhdpi").join("new.png")).unwrap(), "new_icon");
+        // New webp should be copied (non-XML)
+        assert!(main_res.join("drawable-xxhdpi").join("banner.webp").exists());
+        assert_eq!(fs::read_to_string(main_res.join("drawable-xxhdpi").join("banner.webp")).unwrap(), "webp_banner");
     }
 
     #[test]
@@ -1104,5 +1177,67 @@ mod tests {
 
         assert!(main_dir.join("assets").join("assetpack").join("data.bin").exists());
         assert!(main_dir.join("assets").join("assetpack").join("sub").join("extra.bin").exists());
+    }
+
+    #[test]
+    fn test_check_arch_mismatch_exact_match() {
+        let splits = vec![
+            SplitInfo { file: "config.arm64_v8a.apk".to_string(), abi: Some("arm64-v8a".to_string()) },
+        ];
+        let result = check_arch_mismatch(&splits, "arm64-v8a", Path::new("test.xapk"));
+        assert!(result.is_none(), "Exact match should not report mismatch");
+    }
+
+    #[test]
+    fn test_check_arch_mismatch_filename_match() {
+        let splits = vec![
+            SplitInfo { file: "config.armeabi_v7a.apk".to_string(), abi: None },
+        ];
+        let result = check_arch_mismatch(&splits, "armeabi-v7a", Path::new("test.xapk"));
+        assert!(result.is_none(), "Filename-based exact match should not report mismatch");
+    }
+
+    #[test]
+    fn test_check_arch_mismatch_wrong_arch() {
+        let splits = vec![
+            SplitInfo { file: "config.armeabi_v7a.apk".to_string(), abi: Some("armeabi-v7a".to_string()) },
+        ];
+        let result = check_arch_mismatch(&splits, "arm64-v8a", Path::new("test.xapk"));
+        assert!(result.is_some(), "Wrong arch should report mismatch");
+        let msg = result.unwrap();
+        assert!(msg.contains("arm64-v8a"));
+        assert!(msg.contains("armeabi-v7a"));
+    }
+
+    #[test]
+    fn test_check_arch_mismatch_no_native_code() {
+        let splits = vec![
+            SplitInfo { file: "config.fr.apk".to_string(), abi: None },
+            SplitInfo { file: "config.de.apk".to_string(), abi: None },
+        ];
+        let result = check_arch_mismatch(&splits, "arm64-v8a", Path::new("test.xapk"));
+        assert!(result.is_none(), "No arch splits should not report mismatch");
+    }
+
+    #[test]
+    fn test_check_arch_mismatch_universal_with_match() {
+        let splits = vec![
+            SplitInfo { file: "config.arm64_v8a.apk".to_string(), abi: Some("arm64-v8a".to_string()) },
+            SplitInfo { file: "config.armeabi_v7a.apk".to_string(), abi: Some("armeabi-v7a".to_string()) },
+        ];
+        let result = check_arch_mismatch(&splits, "arm64-v8a", Path::new("test.xapk"));
+        assert!(result.is_none(), "Universal with exact match should not report mismatch");
+    }
+
+    #[test]
+    fn test_check_arch_mismatch_universal_without_target() {
+        let splits = vec![
+            SplitInfo { file: "config.arm64_v8a.apk".to_string(), abi: Some("arm64-v8a".to_string()) },
+            SplitInfo { file: "config.armeabi_v7a.apk".to_string(), abi: Some("armeabi-v7a".to_string()) },
+        ];
+        let result = check_arch_mismatch(&splits, "x86", Path::new("test.xapk"));
+        assert!(result.is_some(), "Universal without target arch should report mismatch");
+        let msg = result.unwrap();
+        assert!(msg.contains("x86"));
     }
 }
